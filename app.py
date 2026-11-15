@@ -45,6 +45,25 @@ TF_EVAL = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
+# Blind clinical case mapping so ground-truth labels never leak before inference
+BLIND_PRESET_CATALOG = {
+    "1_normal": {
+        "EN": "Case #01 · Routine Screening Chest X-Ray (Anonymous)",
+        "ID": "Kasus #01 · Rontgen Dada Skrining Rutin (Anonim)",
+        "display_file": "CXR-CASE-01.jpeg",
+    },
+    "2_suspect": {
+        "EN": "Case #02 · Outpatient Dyspnea Chest X-Ray (Anonymous)",
+        "ID": "Kasus #02 · Rontgen Dada Sesak Napas Rawat Jalan (Anonim)",
+        "display_file": "CXR-CASE-02.jpeg",
+    },
+    "3_pneumonia": {
+        "EN": "Case #03 · Acute Fever Emergency Chest X-Ray (Anonymous)",
+        "ID": "Kasus #03 · Rontgen Dada Demam Akut IGD (Anonim)",
+        "display_file": "CXR-CASE-03.jpeg",
+    },
+}
+
 # ==========================================
 # BILINGUAL UI DICTIONARY (EN / ID)
 # ==========================================
@@ -56,8 +75,8 @@ I18N = {
         "guide_btn": "📖 Quick Clinical & Demo Guide",
         "guide_title": "PneumoScan-X · Quick Guide",
         "guide_body": """
-**1. Input Radiograph or Synthetic OOD Test**
-- Upload an AP/PA chest X-ray (`JPEG`/`PNG`) or pick a built-in test case.
+**1. Blind Radiograph Input or Synthetic OOD Test**
+- Upload an AP/PA chest X-ray (`JPEG`/`PNG`) or choose an anonymized clinical test case.
 - Select **`[Test OOD Guard] Synthetic Non-X-Ray Color Image`** to verify how the RGB channel guard blocks non-radiograph photos in one click.
 
 **2. F2-Calibrated 3-Zone Triage (`{t_low}` Cutoff)**
@@ -97,10 +116,11 @@ I18N = {
         ),
         "source_radio": "Select Radiograph Input Source:",
         "opt_upload": "Upload Chest X-Ray Image",
-        "opt_preset": "Use Built-in Sample Preset",
+        "opt_preset": "Use Built-in Clinical Sample",
         "uploader_label": "Upload an anterior-posterior / posterior-anterior chest radiograph (JPEG/PNG)",
-        "preset_select": "Choose a test case:",
+        "preset_select": "Choose an anonymized clinical case:",
         "synthetic_ood_label": "[Test OOD Guard] Synthetic Non-X-Ray Color Image",
+        "generic_case_label": "Clinical Case #{idx:02d} · Chest Radiograph (Anonymous)",
         "decode_err": "Could not decode image `{path}`.",
         "bar_title": "3-Zone F2 Triage Position",
         "bar_scale": "{zero}  |  F2: {t_low}  |  High: {t_high}  |  {one}",
@@ -145,8 +165,8 @@ I18N = {
         "guide_btn": "📖 Panduan Singkat Klinis & Demo",
         "guide_title": "PneumoScan-X · Panduan Singkat",
         "guide_body": """
-**1. Input Radiograf atau Uji Sintetis OOD**
-- Unggah foto rontgen dada AP/PA (`JPEG`/`PNG`) atau pilih kasus uji bawaan.
+**1. Input Radiograf Uji Buta atau Uji Sintetis OOD**
+- Unggah foto rontgen dada AP/PA (`JPEG`/`PNG`) atau pilih kasus uji klinis anonim.
 - Pilih **`[Uji Guard OOD] Gambar Sintetis Berwarna Non-X-Ray`** untuk menguji pemblokiran foto non-rontgen dalam satu klik.
 
 **2. Triase 3-Zona Terkalibrasi F2 (Ambang `{t_low}`)**
@@ -186,10 +206,11 @@ I18N = {
         ),
         "source_radio": "Pilih Sumber Input Radiograf:",
         "opt_upload": "Unggah Foto Rontgen Dada",
-        "opt_preset": "Gunakan Sampel Bawaan",
+        "opt_preset": "Gunakan Sampel Klinis Bawaan",
         "uploader_label": "Unggah foto rontgen dada proyeksi AP / PA (JPEG/PNG)",
-        "preset_select": "Pilih kasus uji:",
+        "preset_select": "Pilih kasus klinis anonim:",
         "synthetic_ood_label": "[Uji Guard OOD] Gambar Sintetis Berwarna Non-X-Ray",
+        "generic_case_label": "Kasus Klinis #{idx:02d} · Radiograf Dada (Anonim)",
         "decode_err": "Gagal membaca file gambar `{path}`.",
         "bar_title": "Posisi Probabilitas pada Triase 3-Zona F2",
         "bar_scale": "{zero}  |  F2: {t_low}  |  Tinggi: {t_high}  |  {one}",
@@ -242,13 +263,31 @@ def fmt_pct(val: float, lang: str, decimals: int = 2) -> str:
     return s.replace(".", ",") if lang == "ID" else s
 
 
-def localize_triage_output(tier: str, desc: str, lang: str, opt_thresh: float):
-    """Localizes clinical triage banner and zone labels dynamically using opt_thresh."""
+def localize_triage_output(tier: str, lang: str, opt_thresh: float):
+    """Explicitly maps triage tier and clinical action text for both EN and ID."""
+    t_up = tier.upper()
+
     if lang == "EN":
-        return tier, desc, tier.split("/")[0].strip()
+        thresh_en = fmt_num(opt_thresh, "EN", 2)
+        if "HIGH" in t_up:
+            return (
+                "HIGH RISK / PNEUMONIA DETECTED",
+                "Strong pneumonia consolidation signature. Prioritize immediate physician evaluation and referral.",
+                "High Risk",
+            )
+        if "SUSPECT" in t_up or "PRIORITY" in t_up:
+            return (
+                "SUSPECT / PRIORITY REVIEW",
+                f"Probability exceeds the F2 triage cutoff ({thresh_en}). Secondary clinical verification recommended.",
+                "Suspect",
+            )
+        return (
+            "NORMAL / LOW RISK",
+            "No significant pneumonia infiltrate pattern detected above the clinical triage cutoff.",
+            "Normal",
+        )
 
     thresh_id = fmt_num(opt_thresh, "ID", 2)
-    t_up = tier.upper()
     if "HIGH" in t_up:
         return (
             "RISIKO TINGGI / PNEUMONIA TERDETEKSI",
@@ -415,7 +454,7 @@ def build_triage_report_txt(
             "PNEUMOSCAN-X · LAPORAN TRIASE KLINIS RONTGEN DADA\n"
             "============================================================\n"
             f"Waktu Pemindaian     : {scan_ts}\n"
-            f"Nama Berkas          : {source_name}\n"
+            f"ID Radiograf         : {source_name}\n"
             f"Arsitektur Model     : MobileNetV2 (PneumoScan-X)\n"
             f"Guard OOD RGB        : {'Aktif' if strict_ood else 'Nonaktif'}\n"
             f"Ambang Grad-CAM++    : {cutoff_str}\n"
@@ -438,7 +477,7 @@ def build_triage_report_txt(
         "PNEUMOSCAN-X · CLINICAL CHEST X-RAY TRIAGE NOTE\n"
         "============================================================\n"
         f"Scan Timestamp       : {scan_ts}\n"
-        f"Radiograph File      : {source_name}\n"
+        f"Radiograph ID        : {source_name}\n"
         f"Model Architecture   : MobileNetV2 (PneumoScan-X)\n"
         f"RGB OOD Guard        : {'Enabled' if strict_ood else 'Disabled'}\n"
         f"Grad-CAM++ Cutoff    : {cutoff_str}\n"
@@ -508,7 +547,7 @@ def run_inference_and_raw_gradcam(
         logits = model(tensor)
         prob = torch.softmax(logits, dim=1)[0, 1].item()
 
-    tier, desc, conf = format_clinical_triage(prob, threshold=opt_thresh)
+    tier, _, conf = format_clinical_triage(prob, threshold=opt_thresh)
 
     cam_input = tensor.clone().detach().requires_grad_(True)
     target_block = model.features[-1]
@@ -529,7 +568,7 @@ def run_inference_and_raw_gradcam(
             param.requires_grad_(prev_state)
 
     latency_ms = (time.perf_counter() - t0) * 1000.0
-    return prob, tier, desc, conf, raw_g_cam, latency_ms, scan_ts
+    return prob, tier, conf, raw_g_cam, latency_ms, scan_ts
 
 
 def render_cam_overlay(
@@ -557,12 +596,19 @@ def discover_sample_presets() -> dict:
     return presets
 
 
-def format_preset_option(preset_key: str, t: dict) -> str:
-    """Formats stable preset keys into localized display labels."""
+def get_blind_preset_info(preset_key: str, preset_keys: list, lang: str, t: dict) -> tuple:
+    """Returns (dropdown_label, sanitized_display_filename) without leaking ground truth."""
     if preset_key == SYNTHETIC_OOD_TOKEN:
-        return t["synthetic_ood_label"]
-    label = preset_key.rsplit(".", 1)[0].replace("_", " ").title()
-    return f"{label} ({preset_key})"
+        return t["synthetic_ood_label"], "synthetic_ood_color_test.png"
+
+    for prefix, meta in BLIND_PRESET_CATALOG.items():
+        if preset_key.startswith(prefix):
+            return meta[lang], meta["display_file"]
+
+    real_keys = [k for k in preset_keys if k != SYNTHETIC_OOD_TOKEN]
+    idx = real_keys.index(preset_key) + 1 if preset_key in real_keys else 1
+    ext = os.path.splitext(preset_key)[1] or ".jpeg"
+    return t["generic_case_label"].format(idx=idx), f"CXR-CASE-{idx:02d}{ext}"
 
 
 # ==========================================
@@ -653,6 +699,8 @@ if model_load_error is not None:
     st.stop()
 
 presets = discover_sample_presets()
+preset_keys = list(presets.keys())
+
 input_mode = st.radio(
     t["source_radio"],
     options=["upload", "preset"],
@@ -678,17 +726,13 @@ if input_mode == "upload":
 else:
     selected_preset_key = st.selectbox(
         t["preset_select"],
-        options=list(presets.keys()),
-        format_func=lambda k: format_preset_option(k, t),
+        options=preset_keys,
+        format_func=lambda k: get_blind_preset_info(k, preset_keys, lang, t)[0],
         key="sample_preset_select",
     )
     sample_target = presets[selected_preset_key]
     source_id = f"preset:{selected_preset_key}"
-    source_name = (
-        "synthetic_ood_color_test.png"
-        if sample_target == SYNTHETIC_OOD_TOKEN
-        else os.path.basename(sample_target)
-    )
+    _, source_name = get_blind_preset_info(selected_preset_key, preset_keys, lang, t)
 
 if source_id is None:
     st.session_state.pop("infer_cache_key", None)
@@ -732,7 +776,6 @@ else:
             preprocessed_rgb,
             prob,
             tier_raw,
-            desc_raw,
             conf,
             raw_g_cam,
             latency_ms,
@@ -742,9 +785,9 @@ else:
         # Fast real-time threshold masking & heatmap overlay
         gradcam_overlay = render_cam_overlay(preprocessed_rgb, raw_g_cam, float(cam_cutoff))
 
-        # Localize triage tier & description dynamically with opt_thresh
+        # Localize triage tier & description explicitly for both EN and ID
         tier_disp, desc_disp, zone_short = localize_triage_output(
-            tier_raw, desc_raw, lang, opt_thresh
+            tier_raw, lang, opt_thresh
         )
 
         # 3-Tier Clinical Triage Banner
@@ -764,7 +807,12 @@ else:
         m1.metric(t["metric_prob"], fmt_pct(prob, lang, 2))
         m2.metric(t["metric_cutoff"], fmt_num(opt_thresh, lang, 2))
         m3.metric(t["metric_zone"], zone_short)
-        m4.metric(t["metric_conf"], f"{conf}%", delta=f"{latency_ms:.0f} ms")
+        m4.metric(
+            t["metric_conf"],
+            f"{conf}%",
+            delta=f"{latency_ms:.0f} ms",
+            delta_color="off",
+        )
 
         # Side-by-Side Visual Explainability
         cutoff_str = fmt_num(float(cam_cutoff), lang, 2)
