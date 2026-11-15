@@ -1,0 +1,22 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.tmp
+
+# Virtual environment
+.venv/
+venv/
+env/
+.streamlit/secrets.toml
+
+# IDE & OS artifacts
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Jupyter & eksperimen training
+.ipynb_checkpoints/
+runs/
+*.log
