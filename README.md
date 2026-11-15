@@ -6,7 +6,7 @@
 
 > **One-Sentence Pitch:** PneumoScan-X helps frontline clinicians in rural clinics without on-site radiologists prioritize high-risk chest X-rays for pneumonia, highlighting suspicious lung regions with Grad-CAM++ while eliminating dataset leakage.
 
-* **Live Clinical Triage Web App:** `[Insert Your Streamlit Community Cloud URL Here]`
+* **Live Clinical Triage Web App:** `[https://pneumoscan-x.streamlit.app/]`
 
 * **Full Research & Audit Notebook:** [`PneumoScan_X_Submission.ipynb`](./PneumoScan_X_Submission.ipynb) *(self-contained with embedded metrics, error audit, and Grad-CAM++ visualizations)*
 
